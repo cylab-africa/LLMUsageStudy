@@ -1,4 +1,0 @@
-repo_name,agent,n_commits,first_seen,last_seen,signals,example_files
-Mosip/esignet,Cursor,56,2026-06-29T16:33:37+05:30,2026-07-27T11:30:52+05:30,identity/trailer,
-Mosip/esignet,OpenAI Codex / AGENTS.md,6,2026-04-28T17:44:20+05:30,2026-07-20T11:18:23+05:30,config-file,AGENTS.md;esignet-service/AGENTS.md
-Mosip/esignet,Claude Code,5,2026-06-18T17:26:29+05:30,2026-07-24T14:00:59+05:30,identity/trailer,
