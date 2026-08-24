@@ -1,0 +1,7 @@
+repo_name,issue_key,component,line,rule,creation_date
+mosip/mosip-config,62e47b41-5115-42e8-a77d-f603f97cb1bb,mosip_mosip-config:hazelcast_cache.xml,82,xml:S2068,2026-06-22T09:35:06+0000
+mosip/mosip-config,d5f84c69-7747-4cee-ac4f-4f9a10d0ec74,mosip_mosip-config:mosip-cbeff.xsd,23,xml:S125,2026-06-22T09:35:06+0000
+mosip/mosip-config,d739045e-9a25-4706-ab5c-4e1953722d4d,mosip_mosip-config:registration-processor-camel-routes-crvs_death-default.xml,127,xml:S125,2026-06-22T09:35:06+0000
+mosip/mosip-config,77d5e688-6ae4-4020-a4e8-2aeeddbec605,mosip_mosip-config:registration-processor-camel-routes-crvs_death-default.xml,152,xml:S125,2026-06-22T09:35:06+0000
+mosip/mosip-config,4510e1aa-9164-43a0-b544-3062a76d90ce,mosip_mosip-config:registration-processor-camel-routes-infant-crvs_new-default.xml,133,xml:S125,2026-06-22T09:35:06+0000
+mosip/mosip-config,9f6832af-710d-4453-bd07-718fc72310d9,mosip_mosip-config:registration-processor-camel-routes-infant-crvs_new-default.xml,161,xml:S125,2026-06-22T09:35:06+0000

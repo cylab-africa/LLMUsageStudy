@@ -1,0 +1,3 @@
+rule,type,severity,effort,example_message
+xml:S125,CODE_SMELL,MAJOR,5min,Remove this commented out code.
+xml:S2068,VULNERABILITY,MAJOR,30min,"""password"" detected here, make sure this is not a hard-coded credential."

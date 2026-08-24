@@ -1,0 +1,6 @@
+agent,category,first_action_date,first_operation,first_ref,n_operations,operations_breakdown
+CodeRabbit,review,2025-11-05T15:47:23Z,pr_reviewed,PR#1514,778,pr_reviewed=778
+OpenAI Codex / AGENTS.md,coding,2026-04-28T17:44:20+05:30,commit,ca25551dcb80,6,commit=6
+Claude Code,coding,2026-06-18T17:26:29+05:30,commit,6e90502d40f2,5,commit=5
+Cursor,coding,2026-06-29T16:33:37+05:30,commit,9e31461fe813,56,commit=56
+__OVERALL__,,2025-11-05T15:47:23Z,pr_reviewed by CodeRabbit,PR#1514,845,commit=67;pr_reviewed=778

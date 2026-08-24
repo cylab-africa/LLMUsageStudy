@@ -26,12 +26,13 @@ theme_set(theme_minimal() +
     ))
 ```
 
+
 ## Data Loading and Preprocessing
 
 ```{r}
 # Load the datasets
-repos_df <- read_csv("../data/repos.csv")
-metrics_df <- read_csv("../data/repo_metrics.csv")
+repos_df <- read_csv("/Users/mbohbless/Software/Upanzi/CursorStudy/data/repos.csv")
+metrics_df <- read_csv("/Users/mbohbless/Software/Upanzi/CursorStudy/data/repo_metrics.csv")
 
 # Process metrics_df - convert datetime and filter adoption time
 metrics_df <- metrics_df %>%
@@ -62,6 +63,7 @@ glimpse(repos_df)
 glimpse(metrics_df)
 ```
 
+
 ## Distribution of Cursor Adoption Time
 
 ```{r}
@@ -83,8 +85,9 @@ p <- ggplot(adoption_counts, aes(x = adoption_yearmonth, y = n)) +
 
 print(p)
 
-ggsave("../plots/cursor_adoption_time.pdf", plot = p, width = 5, height = 2.5, device = CairoPDF, family = "DejaVu Sans")
+ggsave("/Users/mbohbless/Software/Upanzi/CursorStudy/plots/cursor_adoption_time.pdf", plot = p, width = 5, height = 2.5, device = CairoPDF, family = "DejaVu Sans")
 ```
+
 
 ## Distribution of Repository Creation Time
 
@@ -118,6 +121,7 @@ print(p2)
 
 ggsave("../plots/repo_creation_time.pdf", plot = p2, width = 9, height = 3, device = CairoPDF, family = "DejaVu Sans")
 ```
+
 
 ## Descriptive Statistics Table in LaTeX
 
@@ -173,6 +177,7 @@ table_output <- kable(stats_df, format = "latex",
 
 print(table_output)
 ```
+
 
 ## Distribution of Repository Primary Languages
 
