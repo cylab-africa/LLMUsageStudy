@@ -181,3 +181,21 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# --- AI-Impact pipeline (repo outputs/_tools) ---
+# Generated per-repo reports are ephemeral run outputs — keep the tools, not the
+# outputs. Regenerate with run_ai_impact.py; force-add a curated example if needed.
+repo outputs/repo_report/
+
+# Report backups / snapshots (e.g. Mosip_esignet.prev_1239)
+repo outputs/repo_report/*.prev_*/
+repo outputs/repo_report/**/*.bak
+
+# Isolated run workspaces (normally under /tmp; ignore if ever made in-repo)
+ai-impact-*/
+study-run/
+CursorRepos/
+
+# Secret env files with tokens — keep only the committed template
+.env.*
+!.env.example
