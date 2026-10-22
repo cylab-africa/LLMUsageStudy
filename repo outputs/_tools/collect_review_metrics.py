@@ -16,20 +16,23 @@ Per-PR review/comment calls make this the heaviest collector. Bound with
 --since and --max-prs; skipped PRs are logged (never silently dropped).
 
 Usage:
-  python collect_review_metrics.py owner/name /out/dir [--since 2023-01] [--max-prs N]
+  python collect_review_metrics.py owner/name /out/dir [--since 2023-01]
+      [--max-prs N] [--no-merged-by]
 """
 import argparse
 import csv
+import json
 import logging
 import statistics
 import sys
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ai_signatures import match_login, match_review_bot  # noqa: E402
-from gh_rest import get_json, get_token, paginate  # noqa: E402
+from gh_rest import API, get_json, get_token, paginate  # noqa: E402
 
 
 def _month(ts):
@@ -59,11 +62,19 @@ def _month_range(months):
     return out
 
 
-def collect(repo, token, since=None, max_prs=None):
-    review_rows = []
-    pr_meta = {}  # pr_number -> dict(created, merged)
+def collect(
+    repo: str,
+    token: Optional[str],
+    since: Optional[str] = None,
+    max_prs: Optional[int] = None,
+    fetch_merged_by: bool = True,
+) -> Tuple[List[Dict[str, Any]], Dict[Any, Dict[str, str]]]:
+    review_rows: List[Dict[str, Any]] = []
+    pr_meta: Dict[Any, Dict[str, str]] = {}  # pr_number -> dict(created, merged)
     n_pr = 0
     skipped = 0
+    detail_calls = 0
+    detail_failures = 0
     params = {"state": "all", "sort": "created", "direction": "desc", "per_page": 100}
     for pr in paginate(f"/repos/{repo}/pulls", token, params):
         created = pr.get("created_at")
@@ -76,12 +87,29 @@ def collect(repo, token, since=None, max_prs=None):
         n_pr += 1
         num = pr.get("number")
         author = (pr.get("user") or {}).get("login", "")
-        merged_by = (pr.get("merged_by") or {}).get("login", "") if pr.get("merged_by") else ""
-        a_agent, a_cat = match_login(author)
-        m_agent, m_cat = match_login(merged_by)
+        # The API reports the account type; match_login needs it to accept a bare
+        # product name like "Copilot" that would otherwise be indistinguishable
+        # from a human display name.
+        author_is_bot = (pr.get("user") or {}).get("type") == "Bot"
+        merged_at = pr.get("merged_at") or ""
+        # The list endpoint returns a slimmed PR object without `merged_by`;
+        # only GET /pulls/{n} carries it, so merged PRs need one extra call.
+        merged_by = ""
+        merged_by_is_bot = False
+        if merged_at and fetch_merged_by:
+            detail_calls += 1
+            detail = get_json(f"{API}/repos/{repo}/pulls/{num}", token)
+            if detail is None:
+                detail_failures += 1
+            else:
+                merger = detail.get("merged_by") or {}
+                merged_by = merger.get("login") or ""
+                merged_by_is_bot = merger.get("type") == "Bot"
+        a_agent, a_cat = match_login(author, is_bot=author_is_bot)
+        m_agent, m_cat = match_login(merged_by, is_bot=merged_by_is_bot)
         pr_meta[num] = {
             "created_at": created or "",
-            "merged_at": pr.get("merged_at") or "",
+            "merged_at": merged_at,
             "month": _month(created),
             "author": author,
             "author_agent": a_agent or "",
@@ -96,14 +124,14 @@ def collect(repo, token, since=None, max_prs=None):
         for _ in paginate(f"/repos/{repo}/pulls/{num}/comments", token):
             n_comments += 1
 
-        # Formal reviews (APPROVED / CHANGES_REQUESTED / COMMENTED).
-        reviews = get_json(
-            f"https://api.github.com/repos/{repo}/pulls/{num}/reviews", token) or []
+        # Formal reviews (APPROVED / CHANGES_REQUESTED / COMMENTED). Must
+        # paginate: the default page size of 30 silently truncates busy PRs.
+        reviews = list(paginate(f"/repos/{repo}/pulls/{num}/reviews", token))
         if not reviews:
             # No formal review — still record a stub row so PR is counted.
             review_rows.append({
                 "repo_name": repo, "pr_number": num,
-                "pr_created_at": created or "", "pr_merged_at": pr.get("merged_at") or "",
+                "pr_created_at": created or "", "pr_merged_at": merged_at,
                 "reviewer": "", "is_ai_bot": False, "ai_bot_name": "",
                 "review_state": "", "submitted_at": "", "n_review_comments": n_comments,
             })
@@ -112,7 +140,7 @@ def collect(repo, token, since=None, max_prs=None):
             bot = match_review_bot(login)
             review_rows.append({
                 "repo_name": repo, "pr_number": num,
-                "pr_created_at": created or "", "pr_merged_at": pr.get("merged_at") or "",
+                "pr_created_at": created or "", "pr_merged_at": merged_at,
                 "reviewer": login,
                 "is_ai_bot": bot is not None,
                 "ai_bot_name": bot or "",
@@ -122,6 +150,11 @@ def collect(repo, token, since=None, max_prs=None):
             })
     if skipped:
         logging.warning("--max-prs=%s reached: %d PRs skipped (NOT collected)", max_prs, skipped)
+    if fetch_merged_by:
+        logging.info("merged_by detail calls: %d (%d failed)",
+                     detail_calls, detail_failures)
+    else:
+        logging.info("--no-merged-by set: merged_by left blank for all PRs")
     logging.info("PRs processed: %d  review rows: %d", n_pr, len(review_rows))
     return review_rows, pr_meta
 
@@ -179,22 +212,83 @@ def write_csv(path, rows, cols):
             w.writerow({k: r.get(k, "") for k in cols})
 
 
-def main():
+MARKER_NAME = "review_collection.json"
+MARKER_SCHEMA = 1
+OUTPUT_FILES = ("reviews.csv", "review_monthly.csv", "prs.csv")
+
+
+def _run_params(args: argparse.Namespace) -> Dict[str, Any]:
+    """The inputs a cached result must match before --resume may reuse it."""
+    return {
+        "repo": args.repo,
+        "since": args.since or "",
+        "max_prs": args.max_prs,
+        "merged_by": not args.no_merged_by,
+    }
+
+
+def is_complete(out: Path, params: Dict[str, Any]) -> bool:
+    """True only if a previous run with the SAME parameters finished and every
+    output it promised is still present and non-empty. The marker is cleared
+    before collection starts, so interrupted output never counts as complete."""
+    try:
+        marker = json.loads((out / MARKER_NAME).read_text())
+    except (OSError, ValueError):
+        return False
+    if not isinstance(marker, dict) or marker.get("schema") != MARKER_SCHEMA:
+        return False
+    if not marker.get("complete") or marker.get("params") != params:
+        return False
+    return all((out / name).is_file() and (out / name).stat().st_size > 0
+               for name in OUTPUT_FILES)
+
+
+def write_marker(out: Path, params: Dict[str, Any], n_prs: int) -> None:
+    (out / MARKER_NAME).write_text(json.dumps({
+        "schema": MARKER_SCHEMA,
+        "complete": True,
+        "params": params,
+        "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "outputs": list(OUTPUT_FILES),
+        "n_prs": n_prs,
+    }, indent=2))
+
+
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("repo", help="owner/name")
     ap.add_argument("out", help="output directory")
     ap.add_argument("--since", help="YYYY-MM lower bound on PR creation month")
     ap.add_argument("--max-prs", type=int, help="cap PRs processed (heaviest calls)")
+    ap.add_argument("--no-merged-by", action="store_true",
+                    help="skip the per-merged-PR detail call that resolves "
+                         "merged_by (saves 1 API call per merged PR, but "
+                         "disables the pr_merged AI operation)")
+    ap.add_argument("--resume", action="store_true",
+                    help="skip this repo entirely when an identical run already "
+                         "completed; per-PR calls dominate the API bill, so an "
+                         "interrupted batch must not re-spend them")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+    params = _run_params(args)
+    out = Path(args.out)
+    if args.resume and is_complete(out, params):
+        logging.info("--resume: %s already collected (%s); skipping",
+                     args.repo, out / MARKER_NAME)
+        return
+    if (out / MARKER_NAME).exists():
+        logging.warning("Discarding existing %s: this run supersedes it",
+                        MARKER_NAME)
+        (out / MARKER_NAME).unlink(missing_ok=True)
 
     token = get_token()
     if not token:
         logging.warning("No GITHUB_TOKEN found — unauthenticated (60 req/hr).")
-    out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
-    review_rows, pr_meta = collect(args.repo, token, args.since, args.max_prs)
+    review_rows, pr_meta = collect(args.repo, token, args.since, args.max_prs,
+                                   fetch_merged_by=not args.no_merged_by)
     monthly = aggregate_monthly(args.repo, review_rows, pr_meta)
 
     write_csv(out / "reviews.csv", review_rows,
@@ -219,7 +313,9 @@ def main():
     print(f"repo={args.repo}  PRs={len(pr_meta)}  reviews={sum(1 for r in review_rows if r['review_state'])}")
     print(f"  AI review bots detected: {', '.join(ai_bots) if ai_bots else 'NONE'}")
     print(f"  AI PR authors detected:  {', '.join(ai_pr_authors) if ai_pr_authors else 'NONE'}")
-    print(f"Wrote {out/'reviews.csv'}, {out/'review_monthly.csv'}, {out/'prs.csv'}")
+    write_marker(out, params, len(pr_meta))
+    print(f"Wrote {out/'reviews.csv'}, {out/'review_monthly.csv'}, "
+          f"{out/'prs.csv'}, {MARKER_NAME}")
 
 
 if __name__ == "__main__":

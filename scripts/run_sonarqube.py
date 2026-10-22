@@ -312,9 +312,14 @@ def process_repository(
         row_idx = repo_df[repo_df[TIME_KEY] == time_period].index[0]
         commit_hash = repo_df.loc[row_idx, "latest_commit"]
 
-        if not commit_hash:
+        # A period can legitimately have activity but no commit on the branch the
+        # quality snapshots follow. That reaches this column as an empty cell and
+        # comes back from pandas as NaN — a float, and `not NaN` is False, so a
+        # plain falsiness check lets it through and the slice below raises.
+        if pd.isna(commit_hash) or not str(commit_hash).strip():
             logging.warning("No commit hash for %s at %s", repo_name, time_period)
             continue
+        commit_hash = str(commit_hash)
 
         if not check_analysis_exists(project_key, time_period):
             logging.info("%s at %s (%s)", repo_name, time_period, commit_hash[:8])

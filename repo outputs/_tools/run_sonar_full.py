@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Wrapper around the study's scripts/run_sonarqube.py that fixes two things for
+Wrapper around the study's scripts/run_sonarqube.py that fixes three things for
 single-repo full-window scanning, WITHOUT editing the canonical study script:
 
   1. Window: the study hardcodes END_DATE="2025-08-31" (and START="2024-01-01").
@@ -12,6 +12,10 @@ single-repo full-window scanning, WITHOUT editing the canonical study script:
      note). We monkeypatch run_sonar_scan to block on the exact CE task id (from
      .scannerwork/report-task.txt) until it reaches SUCCESS/FAILED, so a single
      pass reliably captures metrics for every month.
+  3. Failure visibility: a CE task that ends FAILED/CANCELED (or never finishes)
+     leaves that month with stale or missing metrics. Those months are recorded
+     to $SONAR_CE_FAILURES and the process exits non-zero, so the orchestrator
+     cannot mistake a partial pass for a complete one.
 
 Run (fork required on macOS so the Pool workers inherit the monkeypatch):
   PYTHONPATH=<workspace/CursorStudy> SONAR_START=2025-01-01 SONAR_END=2035-12-31 \
@@ -22,6 +26,8 @@ import multiprocessing as mp
 import os
 import sys
 import time
+from pathlib import Path
+from typing import Optional
 
 mp.set_start_method("fork", force=True)
 
@@ -37,13 +43,15 @@ rs.END_DATE = os.environ.get("SONAR_END", "2035-12-31")
 # deterministic and avoids Elasticsearch pressure on one machine.
 rs.NUM_PROCESSES = 1
 
+FAILURE_LOG = Path(os.environ.get("SONAR_CE_FAILURES", "sonar_ce_failures.log"))
+
 _orig_scan = rs.run_sonar_scan
 
 
-def _read_ce_task_id(repo_path):
-    p = os.path.join(str(repo_path), ".scannerwork", "report-task.txt")
+def _read_ce_task_id(repo_path: Path) -> Optional[str]:
+    p = Path(repo_path) / ".scannerwork" / "report-task.txt"
     try:
-        with open(p) as f:
+        with p.open() as f:
             for line in f:
                 if line.startswith("ceTaskId="):
                     return line.strip().split("=", 1)[1]
@@ -52,8 +60,10 @@ def _read_ce_task_id(repo_path):
     return None
 
 
-def _wait_ce_task(task_id, timeout=900):
+def _wait_ce_task(task_id: str, timeout: Optional[int] = None) -> Optional[str]:
     """Block until a specific CE task finishes. Returns final status or None."""
+    if timeout is None:
+        timeout = int(os.environ.get("SONAR_CE_TIMEOUT", "1800"))
     headers = {"Authorization": f"Bearer {rs.SONAR_TOKEN}"}
     url = f"{rs.SONAR_HOST}/api/ce/task"
     start = time.time()
@@ -71,20 +81,58 @@ def _wait_ce_task(task_id, timeout=900):
     return None
 
 
-def scan_and_wait(repo_path, commit_hash, version, project_key):
+def _record_failure(project_key: str, version: str, reason: str) -> None:
+    """Pool workers are forked, so failures reach the parent through a file."""
+    try:
+        with FAILURE_LOG.open("a") as f:
+            f.write(f"{project_key},{version},{reason}\n")
+    except OSError as e:
+        logging.warning("Could not record failed month %s @ %s: %s",
+                        project_key, version, e)
+
+
+def scan_and_wait(repo_path: Path, commit_hash: str, version: str,
+                  project_key: str) -> bool:
+    """Scan, then report success only if the CE task actually reached SUCCESS."""
     ok = _orig_scan(repo_path, commit_hash, version, project_key)
-    if ok:
-        task_id = _read_ce_task_id(repo_path)
-        if task_id:
-            status = _wait_ce_task(task_id)
-            logging.info("CE task for %s @ %s -> %s", project_key, version, status)
-        else:
-            # Fallback: brief pause + component-queue drain if report-task.txt missing.
-            time.sleep(5)
-    return ok
+    if not ok:
+        _record_failure(project_key, version, "scanner-failed")
+        return False
+    task_id = _read_ce_task_id(repo_path)
+    if not task_id:
+        logging.warning("No ceTaskId under %s for %s @ %s; cannot confirm the "
+                        "background task, metrics may be stale", repo_path,
+                        project_key, version)
+        time.sleep(5)
+        return True
+    status = _wait_ce_task(task_id)
+    if status != "SUCCESS":
+        logging.error("CE task %s for %s @ %s ended as %s: that month has no "
+                      "fresh metrics", task_id, project_key, version,
+                      status or "TIMEOUT")
+        _record_failure(project_key, version, status or "TIMEOUT")
+        return False
+    logging.info("CE task for %s @ %s -> SUCCESS", project_key, version)
+    return True
 
 
 rs.run_sonar_scan = scan_and_wait
 
-if __name__ == "__main__":
+
+def main() -> None:
+    try:
+        FAILURE_LOG.unlink()
+    except OSError:
+        pass
     rs.main()
+    failures = [ln for ln in FAILURE_LOG.read_text().splitlines()
+                if ln.strip()] if FAILURE_LOG.exists() else []
+    if failures:
+        logging.error("%d month(s) did not complete their SonarQube analysis: %s",
+                      len(failures), "; ".join(failures[:20]))
+        sys.exit(1)
+    logging.info("Every scanned month completed its compute-engine task")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,187 @@
+%==============================================================================
+% APPENDIX — repository tables, styled after Agarwal & Vasilescu,
+% "How Open Source is MOSIP?" (Nov 2025), Appendices A and B.
+%
+% Requires: booktabs, tabularx, longtable (Table B.1 may break across pages).
+% Add to the preamble if not already present:
+%   \usepackage{booktabs}
+%   \usepackage{tabularx}
+%   \usepackage{longtable}
+%
+% Purposes are taken from each repository's own README, not from GitHub
+% descriptions (the MOSIP repositories do not set them). Where the repository
+% also appears in the 15-module set of the earlier report, the module name
+% follows that report's naming so the two documents line up.
+%==============================================================================
+
+\appendix
+
+\section{MOSIP Modules Analysed}
+\label{app:modules}
+
+Table~\ref{tab:modules} lists the twenty repositories in this study. Nine of
+them also appear in the fifteen-module core set analysed by Agarwal and
+Vasilescu~\cite{agarwal2025mosip}; those rows carry that report's module name,
+and the remainder are named from their own documentation. The two selections
+differ because the criteria differ: the earlier report selected the modules
+that constitute a MOSIP deployment, whereas this study ranks by analysable JVM
+source volume and excludes repositories with little or no compilable code.
+Section~\ref{sec:selection} discusses the consequences.
+
+\begin{longtable}{@{}p{0.235\linewidth}p{0.255\linewidth}p{0.45\linewidth}@{}}
+\caption{The twenty MOSIP repositories analysed in this study.
+$^{\dagger}$ also in the fifteen-module set of~\cite{agarwal2025mosip}.}
+\label{tab:modules} \\
+\toprule
+\textbf{Module} & \textbf{Repository} & \textbf{Purpose} \\
+\midrule
+\endfirsthead
+\multicolumn{3}{l}{\small\textit{Table~\ref{tab:modules} -- continued from previous page}} \\
+\toprule
+\textbf{Module} & \textbf{Repository} & \textbf{Purpose} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{3}{r}{\small\textit{continued on next page}} \\
+\endfoot
+\bottomrule
+\endlastfoot
+
+Registration Processor$^{\dagger}$ & mosip/registration &
+  Backend processing and validation of registration data \\
+Registration Client$^{\dagger}$ & mosip/registration-client &
+  Desktop client for capturing demographic and biometric data \\
+Registration Client (Android)$^{\dagger}$ & mosip/android-registration-client &
+  Tablet-based portable registration client \\
+Pre-Registration$^{\dagger}$ & mosip/pre-registration &
+  Online appointment booking and data collection \\
+ID Repository$^{\dagger}$ & mosip/id-repository &
+  Secure storage of identity information and UIN assignment \\
+Authentication$^{\dagger}$ & mosip/id-authentication &
+  Identity verification via APIs (biometric, OTP, demographic) \\
+Resident Services$^{\dagger}$ & mosip/resident-services &
+  Backend services for the resident self-service portal \\
+Partner Management Services$^{\dagger}$ & mosip/partner-management-services &
+  Backend for managing ecosystem partners \\
+Administration Services$^{\dagger}$ & mosip/admin-services &
+  Backend for system administration and master data \\
+\addlinespace
+Commons & mosip/commons &
+  Foundational libraries shared across all MOSIP microservices: configuration
+  management, ID generation, notifications and cryptographic salt generation \\
+eSignet & mosip/esignet &
+  OpenID Connect provider that exposes an existing trusted identity database
+  to digital services; implements OAuth 2.0 authorization code flow \\
+eSignet Signup & mosip/esignet-signup &
+  Signup service and UI allowing end users to register with a digital service
+  through eSignet, pluggable against any ID registry \\
+Key Manager & mosip/keymanager &
+  Secure storage, provisioning and lifecycle management of cryptographic keys;
+  encryption, decryption, signing and verification \\
+OpenID Bridge & mosip/mosip-openid-bridge &
+  Authentication services and adapters bridging OpenID Connect flows with
+  MOSIP's internal authentication \\
+Packet Manager & mosip/packet-manager &
+  Creates, reads, validates and manages registration packets across the
+  identity lifecycle, over multiple sources and object stores \\
+Biometric Utilities & mosip/bio-utils &
+  Shared biometric utility libraries: biometric data handling, ISO format
+  conversion and biometric SDK integration \\
+Fingerprint Quality (NFIQ) & mosip/nfiq &
+  NFIQ fingerprint image quality assessment, used by capture devices to score
+  and auto-capture fingerprints at threshold \\
+Print Service & mosip/print &
+  Reference implementation for printing credentials (eUIN, reprint, QR code)
+  in an event-driven flow \\
+Image Decoder & mosip/imagedecoder &
+  Decoding support for biometric image formats \\
+Utilities & mosip/gist &
+  MOSIP-developed and community-contributed supporting utilities \\
+\end{longtable}
+
+
+\section{Per-Repository Statistics}
+\label{app:perrepo}
+
+Table~\ref{tab:perrepo} reports the data collected for each repository, and
+Table~\ref{tab:adoption} the detected adoption dates. Code size is measured at
+the first and last SonarQube snapshot in the window. ``Sonar months'' is the
+number of months for which a snapshot exists, against ``months'' of any
+recorded activity; the gap is months in which nothing landed on the
+integration branch, leaving no tree to analyse. \texttt{gist} recorded one
+month of activity and no snapshot, and contributes to no estimate.
+
+\begin{table}[htbp]
+\centering
+\caption{Data collected per repository, January 2025 to August 2026.
+Repositories ordered by final code size.}
+\label{tab:perrepo}
+\small
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+ & \multicolumn{2}{c}{Code size (kloc)} & & & & \multicolumn{2}{c}{Months} \\
+\cmidrule(lr){2-3}\cmidrule(lr){7-8}
+Repository & first & last & Commits & PRs & Reviews & Sonar & any \\
+\midrule
+bio-utils                   & 356 & 369 & 190  & 104 & 202  &  9 & 11 \\
+admin-services              & 113 & 117 & 422  & 233 & 609  & 19 & 19 \\
+registration                &  97 & 108 & 390  & 412 & 1238 & 18 & 20 \\
+registration-client         &  82 &  89 &  79  & 119 & 392  & 12 & 15 \\
+android-registration-client &  46 &  84 & 217  & 272 & 1758 & 20 & 20 \\
+id-authentication           &  75 &  80 & 370  & 354 & 848  & 19 & 20 \\
+partner-management-services &  36 &  66 & 729  & 776 & 2340 & 20 & 20 \\
+resident-services           &  57 &  60 & 382  & 234 & 589  & 17 & 19 \\
+esignet                     &  39 &  57 & 1164 & 950 & 4127 & 20 & 20 \\
+id-repository               &  42 &  49 & 808  & 478 & 1325 & 20 & 20 \\
+commons                     &  52 &  44 & 383  & 252 & 567  & 14 & 18 \\
+pre-registration            &  38 &  42 & 231  & 270 & 659  & 16 & 18 \\
+keymanager                  &  20 &  35 & 251  & 248 & 393  & 16 & 20 \\
+esignet-signup              &  24 &  34 & 544  & 459 & 1323 & 20 & 20 \\
+nfiq                        &  13 &  25 &  74  &  45 &  68  &  6 &  9 \\
+mosip-openid-bridge         &  18 &  18 & 156  & 116 & 188  & 10 & 16 \\
+print                       &   8 &  16 & 176  &  89 & 123  & 12 & 14 \\
+imagedecoder                &  14 &  14 &  51  &  37 &  46  &  3 &  9 \\
+packet-manager              &   9 &  11 & 168  & 153 & 293  & 14 & 17 \\
+gist                        & --- & --- &   1  &   2 &   2  &  0 &  1 \\
+\midrule
+\textbf{Total}              &     &     & \textbf{6786} & \textbf{5603} & \textbf{17090} & \textbf{285} & \textbf{326} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Detected AI adoption dates. The review bot arrived first and almost
+simultaneously across the organisation; coding agents followed a median of
+seven months later.}
+\label{tab:adoption}
+\small
+\begin{tabular}{@{}lccr@{}}
+\toprule
+Repository & Review bot & Coding agent & Gap (months) \\
+\midrule
+registration                & 2025-11 & 2026-03 & 4 \\
+registration-client         & 2025-12 & 2026-04 & 4 \\
+esignet                     & 2025-11 & 2026-04 & 5 \\
+imagedecoder                & 2026-01 & 2026-06 & 5 \\
+bio-utils                   & 2025-12 & 2026-06 & 6 \\
+commons                     & 2025-11 & 2026-05 & 6 \\
+id-repository               & 2025-11 & 2026-05 & 6 \\
+partner-management-services & 2025-11 & 2026-05 & 6 \\
+print                       & 2025-12 & 2026-06 & 6 \\
+admin-services              & 2025-11 & 2026-06 & 7 \\
+esignet-signup              & 2025-11 & 2026-06 & 7 \\
+id-authentication           & 2025-11 & 2026-06 & 7 \\
+keymanager                  & 2025-11 & 2026-06 & 7 \\
+mosip-openid-bridge         & 2025-11 & 2026-06 & 7 \\
+packet-manager              & 2025-11 & 2026-06 & 7 \\
+pre-registration            & 2025-11 & 2026-06 & 7 \\
+resident-services           & 2025-11 & 2026-06 & 7 \\
+nfiq                        & 2025-12 & 2026-08 & 8 \\
+android-registration-client & 2025-11 & 2026-08 & 9 \\
+gist                        & ---     & ---     & --- \\
+\midrule
+\textbf{Median}             & \textbf{2025-11} & \textbf{2026-06} & \textbf{7} \\
+\bottomrule
+\end{tabular}
+\end{table}

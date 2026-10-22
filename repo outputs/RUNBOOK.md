@@ -5,6 +5,11 @@ SonarQube quality metrics, warnings, and (extension) multi-agent AI-usage.
 Runs the study's OWN `scripts/*.py` in an isolated workspace so the curated
 `data/*.csv` is never overwritten.
 
+`_tools/run_ai_impact.py` automates steps 1–10 of this runbook (and adds the
+GitHub issue/review collectors); use the manual path below to debug one stage or
+to run without the orchestrator. Read `_tools/README.md` → "Known caveats"
+before interpreting any output either way.
+
 ## 0. Prerequisites
 - Docker Desktop running
 - Python 3.10+ and `git`
@@ -17,7 +22,9 @@ REPO_URL=https://github.com/mosip/mosip-config.git
 REPO_NAME=mosip/mosip-config            # owner/name
 PORT=9011                               # any free port
 W=/tmp/study-run                        # isolated workspace
-STUDY=/Users/mbohbless/Software/Upanzi/CursorStudy
+STUDY="$(git rev-parse --show-toplevel)" # your checkout of this repo; or set it
+                                        # explicitly to the folder holding
+                                        # scripts/ and "repo outputs/"
 ```
 
 ## 2. Clone the target repo (full history — needed for monthly snapshots)
@@ -36,15 +43,23 @@ until curl -s http://localhost:$PORT/api/system/status | grep -q '"status":"UP"'
 ```
 
 ## 4. Set admin password + generate an API token
+The password comes from the environment — never hardcode one in this file or in
+a script. SonarQube requires at least 12 characters with upper case, lower case,
+a digit and a symbol; the container is a throwaway, so a generated value is fine.
 ```bash
-NEWPASS='Mosip!Scan2026'
+# Use SONAR_PASSWORD if you exported one; otherwise generate a throwaway.
+export SONAR_PASSWORD="${SONAR_PASSWORD:-$(python3 -c \
+  'import secrets; print(secrets.token_urlsafe(12) + "aA1!")')}"
 curl -s -u admin:admin -X POST "http://localhost:$PORT/api/users/change_password" \
-  -d "login=admin&previousPassword=admin&password=$NEWPASS"
-TOKEN=$(curl -s -u admin:$NEWPASS -X POST \
+  --data-urlencode "login=admin" --data-urlencode "previousPassword=admin" \
+  --data-urlencode "password=$SONAR_PASSWORD"
+TOKEN=$(curl -s -u "admin:$SONAR_PASSWORD" -X POST \
   "http://localhost:$PORT/api/user_tokens/generate" -d "name=scan-$RANDOM" \
   | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])")
 echo "$TOKEN"
 ```
+`run_ai_impact.py` does this itself in `setup_sonar()`, generating a fresh
+random admin password per run, so an orchestrated run needs nothing set here.
 
 ## 5. Python venv + dependencies
 ```bash
@@ -110,6 +125,12 @@ PYTHONPATH=$W/CursorStudy $PY -m scripts.collect_sonarqube_warnings
 ```
 Result: `data/ts_repos_monthly.csv` (velocity + ncloc/bugs/vulns/code_smells/
 duplication/comment-density/cognitive-complexity/technical-debt per month).
+Velocity comes from `repo.iter_commits()` — **HEAD of the default branch only**,
+not all branches. The window above is the study's hardcoded 2024-01..2025-08;
+`_tools/run_sonar_full.py` widens it via `SONAR_START`/`SONAR_END` and blocks on
+each Community-Edition task, which is what the orchestrator uses.
+Step 3 writes `sonarqube_warnings.csv` + `sonarqube_warning_definitions.csv`
+(there is no `warnings.csv`).
 
 ## 9. Multi-agent AI-usage detection (the ecosystem extension)
 The study detects Cursor only. To cover Claude Code, Copilot, Aider, etc.:
@@ -118,6 +139,10 @@ $PY "$STUDY/repo outputs/_tools/detect_ai_agents.py" \
    /tmp/mosip-scan/repo "$REPO_NAME" /tmp/mosip-scan/output
 # -> ai_agent_commits.csv, ai_agent_summary.csv (empty = no agent usage)
 ```
+This detector scans **all branches** (`git log --all`), while step 8's velocity
+covers the default branch only — the two commit counts are not comparable. To
+turn these detections plus the GitHub collectors into `ai_operations.csv` /
+`ai_adoption.csv`, run `_tools/build_ai_operations.py <out/dir>`.
 
 ## 10. Cleanup
 ```bash
@@ -132,3 +157,6 @@ rm -rf /tmp/mosip-scan /tmp/study-run
   `launch_sonar.py` run (the script's docstring notes this).
 - For a real cross-agent study you must run this over MANY repos to form
   per-agent treatment cohorts + matched controls, then use the R notebooks.
+- Interpretation hazards (adoption mixing review bots with coding agents,
+  branch-scope mismatch, GitHub API budget vs. rate limits) are documented in
+  `_tools/README.md` → "Known caveats" and in `AI_IMPACT_PIPELINE_PLAN.md` §8.

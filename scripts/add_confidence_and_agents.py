@@ -18,12 +18,17 @@ Required files and paths:
 All functions from cursor_rules.ipynb are included in this script.
 """
 
+import argparse
 import pandas as pd
 import numpy as np
 import subprocess
 import os
 from pathlib import Path
 from collections import Counter
+
+# Paths
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_BASE_REPO_PATH = SCRIPT_DIR.parent.parent / "CursorRepos"
 
 
 # ============================================================================
@@ -562,7 +567,35 @@ def create_rules_from_panel(df_panel, base_repo_path):
     return pd.DataFrame(rules_data)
 
 
-def main():
+def resolve_base_repo_path() -> str:
+    """Resolve the clone directory from a CLI flag, an env var, or the default."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Add high_confidence and other_agents columns to "
+            "panel_event_monthly.csv"
+        )
+    )
+    parser.add_argument(
+        "--base-repo-path",
+        default=os.getenv("BASE_REPO_PATH"),
+        help=(
+            "Directory holding the cloned repositories. Defaults to "
+            "$BASE_REPO_PATH, then to CursorRepos next to this checkout."
+        ),
+    )
+    args = parser.parse_args()
+
+    base_repo_path = Path(args.base_repo_path or DEFAULT_BASE_REPO_PATH)
+    if not base_repo_path.is_dir():
+        parser.error(
+            f"repository directory not found: {base_repo_path}. Pass "
+            "--base-repo-path or set BASE_REPO_PATH to the directory "
+            "holding the cloned repositories."
+        )
+    return str(base_repo_path)
+
+
+def main() -> None:
     """Main function to process panel_event_monthly.csv and add columns."""
     
     # File paths - adjust these paths as needed
@@ -572,7 +605,7 @@ def main():
     # Required paths - these must exist
     cursor_files_path = '../data/cursor_files.csv'
     ts_repos_monthly_path = '../data/ts_repos_monthly.csv'
-    base_repo_path = ### Add path to the repositories here
+    base_repo_path = resolve_base_repo_path()
     
     print("="*80)
     print("Processing panel_event_monthly.csv to add confidence and agent columns")

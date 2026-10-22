@@ -12,6 +12,7 @@ import argparse
 import logging
 import multiprocessing
 import random
+import re
 import subprocess
 import sys
 from collections import defaultdict
@@ -25,6 +26,7 @@ import pandas as pd
 # Constants
 REPOS_CSV = Path(__file__).parent.parent / "data" / "repos.csv"
 CURSOR_FILES_CSV = Path(__file__).parent.parent / "data" / "cursor_files.csv"
+RELEASE_BRANCH_RE = re.compile(r"^origin/release-[0-9]+(\.[0-9x]+)*$")
 CURSOR_COMMITS_CSV = Path(__file__).parent.parent / "data" / "cursor_commits.csv"
 CLONE_DIR = Path(__file__).parent.parent.parent / "CursorRepos"
 OUTPUT_DIR = Path(__file__).parent.parent / "data"
@@ -48,6 +50,40 @@ def get_time_key(commit_time: datetime, aggregation: str) -> str:
         return commit_time.strftime("%Y-W%W")
     else:  # month
         return commit_time.strftime("%Y-%m")
+
+
+def pick_integration_branch(repo: git.Repo) -> str:
+    """Name the branch whose tip represents "the project" at a point in time.
+
+    Quality snapshots need one coherent, shippable tree per period, and under
+    gitflow that is the integration branch rather than the default branch:
+    MOSIP keeps `master` for releases while day-to-day work lands on `develop`,
+    so scanning HEAD samples a largely dormant branch.
+
+    Preference order: develop, then the highest release-*, then main/master,
+    then whatever HEAD points at. Returns a ref resolvable by iter_commits.
+    """
+    try:
+        refs = [r.name for r in repo.remotes.origin.refs]
+    except (AttributeError, IndexError, git.GitError, ValueError):
+        refs = []
+
+    for candidate in ("origin/develop", "origin/development"):
+        if candidate in refs:
+            return candidate
+
+    releases = sorted(r for r in refs if RELEASE_BRANCH_RE.match(r))
+    if releases:
+        return releases[-1]
+
+    for candidate in ("origin/main", "origin/master"):
+        if candidate in refs:
+            return candidate
+
+    try:
+        return repo.active_branch.name
+    except TypeError:  # detached HEAD
+        return "HEAD"
 
 
 def get_commit_stats(
@@ -100,20 +136,19 @@ def get_commit_stats(
             )
         )
 
-        for commit in repo.iter_commits():
+        # Velocity is counted across ALL branches so that it covers the same
+        # commit set as the AI-agent detector (which uses `git log --all`).
+        # Counting only HEAD understates gitflow projects badly: across the 20
+        # MOSIP repos, HEAD (`master`) held 2025 of 6793 commits since 2025-01,
+        # because releases land on master while the work happens on develop and
+        # feature branches. See pick_integration_branch for the quality side.
+        for commit in repo.iter_commits(all=True):
             commit_time = datetime.fromtimestamp(commit.committed_date)
             time_key = get_time_key(commit_time, aggregation)
             author_str = f"{commit.author.name} <{commit.author.email}>"
 
             time_stats[time_key]["commits"] += 1
             time_stats[time_key]["contributors"].add(author_str)
-
-            if (
-                time_stats[time_key]["latest_commit_time"] is None
-                or commit_time > time_stats[time_key]["latest_commit_time"]
-            ):
-                time_stats[time_key]["latest_commit"] = commit.hexsha
-                time_stats[time_key]["latest_commit_time"] = commit_time
 
             contributor_time_stats[time_key][author_str]["commits"] += 1
 
@@ -173,6 +208,24 @@ def get_commit_stats(
             except Exception as e:
                 logging.debug("Could not get diff for commit %s: %s", commit.hexsha, e)
                 continue
+
+        # `latest_commit` is what run_sonarqube.py checks out to snapshot quality,
+        # so it must name a coherent, shippable tree — NOT simply the newest commit
+        # across every branch, which could be an unmerged feature tip that never
+        # represented the project. Take it from the integration branch only. A
+        # period with no integration-branch commit gets None and is skipped by the
+        # scanner, which is correct: nothing shipped that period.
+        integration = pick_integration_branch(repo)
+        logging.info("Quality snapshots for %s follow %s", repo_path.name, integration)
+        for commit in repo.iter_commits(integration):
+            commit_time = datetime.fromtimestamp(commit.committed_date)
+            time_key = get_time_key(commit_time, aggregation)
+            if (
+                time_stats[time_key]["latest_commit_time"] is None
+                or commit_time > time_stats[time_key]["latest_commit_time"]
+            ):
+                time_stats[time_key]["latest_commit"] = commit.hexsha
+                time_stats[time_key]["latest_commit_time"] = commit_time
 
         result = {}
         for time_key, stats in time_stats.items():

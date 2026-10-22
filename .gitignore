@@ -199,3 +199,9 @@ CursorRepos/
 # Secret env files with tokens — keep only the committed template
 .env.*
 !.env.example
+
+# Pooled cross-repo analytics + run logs from the AI-Impact batch. Derived from
+# a specific run of run_ai_impact.py over a repo cohort; regenerate with
+# _tools/analytics.py rather than tracking. Drop these two lines to keep them.
+repo outputs/analytics/
+repo outputs/run_logs/

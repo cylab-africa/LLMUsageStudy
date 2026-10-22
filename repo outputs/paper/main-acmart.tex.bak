@@ -1,0 +1,479 @@
+%==============================================================================
+% AI adoption in MOSIP -- working draft
+%
+% TO USE IN OVERLEAF
+%   1. New Project -> Upload Project -> zip this whole `paper/` folder
+%   2. Set the main document to main.tex, compiler pdfLaTeX
+%   3. Overleaf ships acmart, so this compiles as-is
+%
+% TO SWITCH TO A PLAIN ARTICLE (no ACM formatting), replace the documentclass
+% line and the \acmConference/\settopmatter block with:
+%     \documentclass[11pt,a4paper]{article}
+%     \usepackage[margin=1in]{geometry}
+% and delete \maketitle's ACM-specific commands (\acmConference, \acmBooktitle).
+%
+% `nonacm` drops the copyright block, which is what you want for a draft.
+%==============================================================================
+\documentclass[sigconf,nonacm,balance=false]{acmart}
+
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage{siunitx}
+\sisetup{group-separator={,},detect-weight=true}
+
+% shorthand for the event-time symbol so it stays consistent
+\newcommand{\evt}{\tau}
+% marks a result that reached significance, so the convention is in one place
+\newcommand{\sig}[1]{\textbf{#1}}
+
+\begin{document}
+
+\title{More Code, Slower Tangle: AI Adoption Across Twenty MOSIP Core Services}
+
+%------------------------------------------------------------------------------
+% TODO: fill in authors
+%------------------------------------------------------------------------------
+\author{Author One}
+\affiliation{%
+  \institution{Carnegie Mellon University Africa}
+  \city{Kigali}
+  \country{Rwanda}}
+\email{author@example.org}
+
+\renewcommand{\shortauthors}{Author One}
+
+\begin{abstract}
+AI coding assistants are widely argued to trade short-term velocity for
+long-term maintainability. We test this inside a single organisation: twenty
+core Java services of MOSIP, the open-source digital identity platform deployed
+by several national governments. We reconstruct \num{326} repository-months of
+history from git, the GitHub API and \num{286} monthly SonarQube snapshots, and
+detect AI adoption from commit trailers, agent configuration files and bot
+accounts without relying on self-report.
+
+MOSIP adopted two distinct classes of AI tool seven months apart --- an AI code
+\emph{reviewer} organisation-wide in November 2025, and AI code \emph{writers}
+from March 2026 --- which we treat as separate interventions. All measures are
+reported in absolute terms, without normalisation. After coding-agent adoption,
+code volume grew in \sig{all 16} repositories with quality data (median
+$+11\%$, $p<0.0001$). Cognitive complexity rose in 14 of 16 repositories
+($+2\%$, $p=0.005$) and code smells in 13 of 16 ($+5\%$, $p=0.011$), while
+technical debt, bugs and vulnerabilities did not move and duplication fell
+($-3\%$, $p=0.024$). The quality burden therefore grew, and grew more slowly
+than the codebase producing it. Following review-bot adoption, human review per
+pull request \emph{rose} from \num{1.43} to \num{1.80} ($p=0.009$): the bot
+was additive, not substitutive.
+
+We report these as descriptive, not causal. Adoption was near-simultaneous
+across repositories ($\mathrm{corr}(\evt,t)=0.98$), so event time is nearly
+collinear with calendar time and a shared shock cannot be separated from a
+treatment effect --- an asymmetry that leaves our null results more robust than
+any claim about activity levels.
+\end{abstract}
+
+\keywords{AI coding assistants, code quality, mining software repositories,
+digital public infrastructure, event study}
+
+\maketitle
+
+%==============================================================================
+\section{Introduction}
+\label{sec:intro}
+
+The claim that AI coding assistants trade short-term speed for long-term
+maintainability is now widely repeated and has recent empirical support. He
+et~al.~\cite{he2026speed} report that Cursor adoption raises velocity while
+worsening complexity growth across a large population of open-source projects,
+estimating an \emph{average} effect using difference-in-differences against
+matched controls.
+
+This work asks a narrower question with a different unit of analysis: what
+happens inside \emph{one} organisation? MOSIP is digital public infrastructure
+--- the identity platform deployed by several national governments --- so its
+code is long-lived, security-sensitive, and maintained by a stable engineering
+organisation rather than a churning volunteer pool. If AI assistance degrades
+maintainability anywhere, this is a setting where the consequences matter.
+
+MOSIP also proves to be an unusually clean natural setting, for a reason that
+emerged only during data collection: the organisation adopted \textbf{two
+different classes of AI tool, seven months apart}. An AI code \emph{reviewer}
+arrived first, organisation-wide; AI code \emph{writers} followed. These are
+distinct interventions with distinct predicted effects, and prior work
+generally collapses them.
+
+\paragraph{Research questions}
+\begin{description}
+  \item[RQ1 (Volume)] Did the amount of code, and the rate at which it is
+    produced, change after AI coding agents were adopted?
+  \item[RQ2 (Quality)] Did internal code quality --- complexity, code smells,
+    technical debt --- change after adoption?
+  \item[RQ3 (Review practice)] Did an AI code-review bot substitute for human
+    review effort, or add to it?
+\end{description}
+
+%==============================================================================
+\section{Methods}
+\label{sec:methods}
+
+\subsection{Repository selection}
+\label{sec:selection}
+
+The MOSIP GitHub organisation holds \num{109} public repositories, \num{97} of
+them neither archived nor forks. Ranking by stars is uninformative here --- the
+whole organisation spans 4 to 87 stars --- and promotes artefacts with no
+analysable code, such as \texttt{documentation} (\SI{794}{\mega\byte} of prose)
+and the empty \texttt{mosip} meta-repository.
+
+We instead ranked by \textbf{JVM source volume} obtained from the GitHub
+languages API, after excluding by name mocks, test harnesses, deployment and
+infrastructure repositories, configuration repositories and documentation. That
+left \num{36} candidate core services, of which we took the \textbf{top 20 by
+source volume}, totalling \SI{47.2}{\mega\byte} of JVM source. Checkout size
+was rejected as a criterion because it is inflated by history and binaries:
+\texttt{packet-manager} occupies \SI{188}{\mega\byte} on disk but holds only
+\SI{0.51}{\mega\byte} of Java.
+
+\subsection{Data collection}
+\label{sec:collection}
+
+Three independent sources were collected in September 2026 over a window of
+2025-01 to 2026-08 (Table~\ref{tab:data}).
+
+\begin{table}[t]
+\caption{Data sources and coverage.}
+\label{tab:data}
+\small
+\begin{tabular}{@{}llr@{}}
+\toprule
+Source & Extracted & Volume \\
+\midrule
+Git history   & commits, lines $\pm$, contributors & \num{6786} commits \\
+              &                                    & \num{3188107} lines added \\
+GitHub API    & pull requests, reviews, issues     & \num{5603} PRs \\
+              &                                    & \num{17090} review records \\
+              &                                    & \num{1222} issues \\
+SonarQube 26.8& ncloc, cognitive complexity, code  & \num{286} snapshots \\
+              & smells, technical debt, bugs,      & (\num{285}/\num{326} \\
+              & vulnerabilities, duplication       & repo-months, 87\%) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+SonarQube reports only on a checked-out working tree, so history was
+reconstructed by checking out the last commit of each month and re-analysing
+the project in full --- \num{286} independent analyses on a dedicated Linux
+host. Months in which nothing landed on the integration branch have no
+snapshot, accounting for nearly all of the 13\% shortfall. Analysis ran on
+source without compilation, matching the procedure of~\cite{he2026speed}.
+
+Velocity is counted across \emph{all} branches (\texttt{git log -{}-all}),
+because MOSIP follows gitflow and \texttt{master} held only \num{2025} of
+\num{6786} commits in the window; quality snapshots necessarily follow a single
+integration branch. The two halves therefore describe different commit sets ---
+``all work performed'' versus ``quality of the shippable tree'' --- and are not
+strictly commensurable.
+
+\subsection{Detecting adoption}
+\label{sec:detection}
+
+Adoption was not self-reported. Three independent signal families were matched
+against every repository: commit-message trailers and identities
+(\texttt{Co-Authored-By: Claude}, \texttt{cursoragent}), agent configuration
+files committed to the tree (\texttt{CLAUDE.md}, \texttt{.cursor/},
+\texttt{AGENTS.md}), and bot accounts acting on GitHub. Detection yielded
+\num{4288} AI-attributable actions (Table~\ref{tab:tools}).
+
+\begin{table}[t]
+\caption{Detected AI tools and organisation-wide adoption.}
+\label{tab:tools}
+\small
+\begin{tabular}{@{}llrl@{}}
+\toprule
+Tool & Class & Actions & Adoption \\
+\midrule
+CodeRabbit    & reviews code & \num{4141} & 2025-11 (14/19 repos) \\
+Cursor        & writes code  & \num{64}   & 2026-03 -- 2026-08 \\
+OpenAI Codex  & writes code  & \num{48}   & 2026-04 -- 2026-06 \\
+Claude Code   & writes code  & \num{35}   & 2026-06 -- 2026-08 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The gap between a repository's review-bot and coding-agent adoption has median
+\textbf{7 months} (range 4--9). RQ1 and RQ2 are therefore evaluated against
+\textbf{coding-agent} adoption and RQ3 against \textbf{review-bot} adoption.
+Collapsing the two attributes code-generation effects to the arrival of a
+commenting tool.
+
+\subsection{Analysis design}
+\label{sec:design}
+
+Each repository's timeline is re-indexed to event time,
+\begin{equation}
+  \evt_{it} = t - a_i ,
+  \label{eq:eventtime}
+\end{equation}
+where $a_i$ is repository $i$'s own adoption month, and the twenty series are
+pooled by $\evt$.
+
+\textbf{All measures are reported raw.} No normalisation is applied: no ratio
+to a pre-adoption baseline, and no division by code size. Figures use
+logarithmic axes where repositories span orders of magnitude (\texttt{ncloc}
+ranges from \num{7931} to \num{355811}), but that is a display choice and
+leaves the values untouched.
+
+Every test is a \emph{within-repository} comparison, so each repository serves
+as its own control and differences in scale between repositories do not
+confound the tests themselves. Scale does dominate the pooled box plots, where
+the height of each box is largely between-repository size rather than change
+over time; the per-repository view in Figure~\ref{fig:perrepo} is provided for
+that reason.
+
+Hypothesis tests are computed at the \textbf{repository level}: each repository
+contributes one pre-adoption median and one post-adoption median, giving 16--19
+independent pairs compared by Wilcoxon signed-rank. Pooling repository-months
+would inflate $n$ to roughly \num{300} and overstate significance, since months
+within a repository are strongly autocorrelated. The incomplete current month
+is excluded throughout.
+
+%==============================================================================
+\section{Results}
+\label{sec:results}
+
+\subsection{Code volume}
+\label{sec:volume}
+
+Table~\ref{tab:volume} splits at coding-agent adoption, with pre
+$=\evt\in[-6,-1]$ and post $=\evt\in[+1,+3]$.
+
+\begin{table}[t]
+\caption{Code volume, raw. Repository-level paired medians, Wilcoxon signed-rank.}
+\label{tab:volume}
+\small
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+Measure & pre & post & ratio & $p$ & $n$ & up \\
+\midrule
+Code size (ncloc)       & \num{45362} & \num{50531} & 1.11 & \sig{$<$.0001} & 16 & \sig{16/16} \\
+Lines removed / month   & 403   & 501   & 1.24 & \sig{.007} & 17 & \sig{14/17} \\
+Lines added / month     & \num{1583} & \num{3098} & 1.96 & .145 & 17 & 10/17 \\
+Lines added / commit    & 243.8 & 435.7 & 1.79 & .244 & 17 & 9/17 \\
+Commits / month         & 11.0  & 12.0  & 1.09 & .287 & 17 & 11/17 \\
+Contributors / month    & 4.5   & 3.5   & 0.78 & .726 & 17 & 5/17 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Finding 1} Code volume grew unanimously and significantly: every one
+of the 16 repositories with quality data was larger after adoption, a median
+increase of 11\% within three months. Deletion activity also rose ($+24\%$,
+$p=.007$) in 14 of 17 repositories.
+
+Commit \emph{count} did not change ($p=.287$). Commit \emph{size} nearly
+doubled in the median (244 $\to$ 436 lines added per commit) but is not
+significant and splits 9/17 --- the median moved because a minority of
+repositories changed a great deal, not because most did. That measure is also a
+monthly mean ($\text{lines} \div \text{commits}$) rather than a distribution
+over commits, so a single bulk import dominates its month; \texttt{nfiq}
+2025-09 comprises 2 commits and \num{36810} lines. It should be read as
+indicative only.
+
+\subsection{Code quality}
+\label{sec:quality}
+
+\begin{table}[t]
+\caption{Code quality, raw totals.}
+\label{tab:quality}
+\small
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+Measure (raw) & pre & post & ratio & $p$ & $n$ & up \\
+\midrule
+Cognitive complexity & \num{2703} & \num{2762} & 1.02 & \sig{.005} & 16 & \sig{14/16} \\
+Code smells          & 790.5      & 827.5      & 1.05 & \sig{.011} & 16 & \sig{13/16} \\
+Duplication (\%)     & 9.00       & 8.70       & 0.97 & \sig{.024} & 16 & 3/16 \\
+Vulnerabilities      & 8.5        & 9.5        & 1.12 & .093 & 16 & 5/16 \\
+Bugs                 & 14.0       & 14.0       & 1.00 & .063 & 16 & 6/16 \\
+Technical debt (min) & \num{5554} & \num{5617} & 1.01 & .496 & 16 & 9/16 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Finding 2} Absolute complexity and code smells rose significantly:
+complexity in 14 of 16 repositories ($+2\%$, $p=.005$) and smells in 13 of 16
+($+5\%$, $p=.011$). Technical debt, bugs and vulnerabilities did not move.
+Duplication \emph{fell} ($-3\%$, $p=.024$) in 13 of 16 repositories.
+
+The increases are consistent in direction but small in magnitude. Read
+alongside Finding~1, the same repositories over the same interval added
+\textbf{11\% more code} while complexity rose \textbf{2\%} and smells
+\textbf{5\%}: the measured quality burden grew, and grew more slowly than the
+codebase producing it.
+
+\paragraph{What absolute counts can and cannot settle.} A reviewer will ask
+whether these increases reflect degrading code or simply more of it. Absolute
+counts alone cannot separate the two: any codebase that grows accumulates more
+complexity points and more smells even when every new line is written to the
+same standard as the old. We report absolute values throughout, so the question
+is raised here rather than answered. The relevant evidence available is the
+juxtaposition above --- 11\% more code against a 2\% rise in complexity. A
+size-conditioned analysis, or a model treating \texttt{ncloc} as a covariate,
+would settle it directly and is the obvious next step.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{figures/eventstudy.png}
+  \caption{Event study on coding-agent adoption (purple band), all values raw.
+  The earlier review-bot rollout appears as the dashed line at its median
+  offset $\evt=-7$, with a band over its range. Axes are logarithmic where
+  repositories differ by orders of magnitude. Box \emph{height} here is
+  dominated by between-repository size rather than change over time; $n$
+  beneath each box, red below 10.}
+  \label{fig:eventstudy}
+\end{figure*}
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{figures/perrepo.png}
+  \caption{Per-repository view, raw values, both axes anchored at zero. In most
+  repositories the two lines track each other, the signature of complexity
+  accumulating in step with code. The exceptions run both ways:
+  \texttt{print} doubled in size (8k $\to$ 16k lines) with complexity almost
+  flat (591 $\to$ 614), while \texttt{esignet-signup} grew 42\% in size
+  (24k $\to$ 34k) but 88\% in complexity (\num{1543} $\to$ \num{2903}).}
+  \label{fig:perrepo}
+\end{figure*}
+
+Per repository, 17 of 19 grew in size (Figure~\ref{fig:perrepo}). Both
+directions of the complexity relationship are present and should not be
+averaged away.
+
+\subsection{Code-review practices}
+\label{sec:review}
+
+RQ3 is evaluated against \textbf{review-bot} adoption, the relevant
+intervention, with pre $=\evt\in[-6,-1]$ and post $=\evt\in[+1,+6]$.
+
+\begin{table}[t]
+\caption{Review practice, split at review-bot adoption.}
+\label{tab:review}
+\small
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Measure & pre & post & ratio & $p$ & $n$ \\
+\midrule
+AI reviews / month      & 0.0  & 6.0  & ---  & \sig{.001} & 19 \\
+Human reviews / month   & 12.0 & 16.0 & 1.33 & .260       & 19 \\
+All reviews / month     & 12.0 & 26.5 & 2.21 & \sig{.018} & 19 \\
+\sig{Human reviews / PR}& \sig{1.43} & \sig{1.80} & 1.26 & \sig{.009} & 19 \\
+PRs opened / month      & 12.5 & 8.0  & 0.64 & \sig{.006} & 19 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Finding 3} The review bot was \textbf{additive, not substitutive}.
+Human review per pull request rose from \num{1.43} to \num{1.80} ($p=.009$),
+falling in only 6 of 19 repositories. Total review activity more than doubled.
+AI review accounts for \textbf{26.1\%} of all \num{15824} review submissions
+across the organisation.
+
+This is the clearest result in the study and the least threatened by the design
+limitation in Section~\ref{sec:threats}, because the treatment indicator and
+the outcome are the same class of event. The pre-adoption AI review share is
+exactly zero in every repository in every month and rises to a plateau of
+0.35--0.45 after adoption, which also validates the detection procedure end to
+end.
+
+\paragraph{A competing explanation.} Pull-request volume fell 36\% over the
+same period ($12.5 \to 8.0$, $p=.006$). Human reviews per PR could therefore
+rise because fewer, larger pull requests each attract more attention rather
+than because reviewers became more engaged. Distinguishing these requires
+conditioning on PR size, which we have not yet done.
+
+%==============================================================================
+\section{Threats to Validity}
+\label{sec:threats}
+
+\paragraph{Near-simultaneous adoption limits identification.} Fourteen of
+nineteen repositories adopted CodeRabbit in a single month;
+$\mathrm{corr}(\evt,t)=0.997$ for the review wave and $0.980$ for the coding
+wave. In the canonical two-way specification
+\begin{equation}
+  y_{it} = \alpha_i + \lambda_t
+         + \sum_{k \neq -1} \beta_k \mathbf{1}[\evt_{it}=k] + \varepsilon_{it},
+  \label{eq:twfe}
+\end{equation}
+common adoption $a_i = a$ implies
+$\mathbf{1}[\evt_{it}=k] = \mathbf{1}[t=a+k]$, a deterministic function of
+calendar time lying in the span of the time fixed effects, so $\beta_k$ is not
+separately identified. \textbf{The consequence is asymmetric}: a shared shock
+can manufacture an apparent effect but cannot manufacture a null. Findings 2
+and 3 are therefore more robust than any claim about activity levels.
+
+\paragraph{Absolute counts confound quality with quantity.} Complexity and
+smell totals necessarily rise in a growing codebase. Findings 1 and 2 report
+real, separately measured quantities, but this study does not adjudicate
+whether the quality increases exceed what growth alone implies.
+
+\paragraph{An organisation-wide slowdown.} Mean output fell from \num{24.4} to
+\num{14.5} commits per repository per month between 2025 and 2026, beginning
+months before any coding agent. Every repository's pre/post boundary straddles
+it. We therefore advance no velocity claim.
+
+\paragraph{Short post-adoption window.} Coding agents arrived mid-2026 and the
+data ends 2026-08. By $\evt=+3$ only six repositories remain. Long-run
+maintainability effects --- precisely what the literature
+predicts~\cite{he2026speed} --- are not yet observable.
+
+\paragraph{Small treatment dose.} \num{147} commits are attributable to coding
+agents across \num{326} repository-months.
+
+\paragraph{Unbalanced panel.} Repositories enter and leave columns; only five
+appear at both $\evt=-10$ and $\evt=+3$. Because all tests are
+within-repository this does not bias them, but raw cross-column comparisons in
+the figures are unsafe.
+
+\paragraph{Single organisation.} MOSIP's engineering culture, review norms and
+gitflow process are its own. Nothing here generalises without replication.
+
+%==============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+Within one organisation, over a short post-adoption window, with a small
+treatment dose: the code grew by 11\%, and its measured complexity and smell
+counts grew by 2\% and 5\%. Technical debt, bugs and vulnerabilities did not
+move; duplication improved. The direction is consistent with the population
+literature~\cite{he2026speed}, but the magnitudes are substantially smaller
+than the growth in code volume over the same interval, and this design cannot
+separate either from a coincident organisational shock.
+
+One contribution stands independently of the AI question. The distinction
+between AI reviewers and AI writers is empirically consequential: these tools
+arrived seven months apart, had different effects, and conflating them produces
+attribution errors. The review-practice result in Section~\ref{sec:review} is
+also the most robust finding here, because the outcome and the intervention are
+the same class of event.
+
+Next steps: construct a matched control cohort, which is the only remedy for
+the identification problem in Section~\ref{sec:threats}; add a size-conditioned
+analysis so Finding~2 can be read against what growth alone predicts; recompute
+commit size as a true per-commit distribution, which also permits a
+within-repository comparison of AI-authored against human-authored commits and
+sidesteps the timing confound entirely; and re-run collection in six months,
+when the post-adoption window will support the long-run question.
+
+%==============================================================================
+\section*{Data Availability}
+All figures and statistics are reproducible from the per-repository reports and
+the pooled panel \texttt{panel\_ai\_impact.csv} via the scripts in
+\texttt{\_tools/analysis/}. Tests use \texttt{scipy.stats.wilcoxon},
+two-sided, on repository-level pairs; percentiles use NumPy linear
+interpolation (Hyndman--Fan type 7).
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{references}
+
+\end{document}

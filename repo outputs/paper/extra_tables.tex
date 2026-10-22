@@ -1,0 +1,139 @@
+%==============================================================================
+% ADDITIONAL TABLES
+%
+% Three tables that a reviewer is likely to ask for, in descending order of
+% necessity. Each defends a decision the paper makes rather than adding
+% description for its own sake.
+%
+%   Table C.1  branch scope      -> §2 Methods  (NECESSARY: defends a choice)
+%   Table C.2  selection funnel  -> §2.1        (makes selection reproducible)
+%   Table C.3  review actors     -> §3.3        (the split asked for explicitly)
+%
+% Requires: booktabs. Table C.1 also uses \multicolumn and \cmidrule.
+%==============================================================================
+
+
+%==============================================================================
+% TABLE C.1 — BRANCH SCOPE.  Put this in §2, near the branch-scope paragraph.
+% This is the one I would not omit: it is the evidence for analysing a branch
+% other than the repository default, which a reviewer will question.
+%==============================================================================
+\begin{table}[htbp]
+\centering
+\caption{Commits reachable from each branch, January 2025 to August 2026.
+Counts overlap, since a commit merged from \texttt{develop} into
+\texttt{master} is reachable from both. The default branch is \texttt{master}
+for 19 of the 20 repositories and \texttt{main} for one.}
+\label{tab:branches}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Repository & \texttt{master} & \texttt{develop} & all branches \\
+\midrule
+esignet                     & 461 & 539 & 1165 \\
+id-repository               & 131 & 294 &  808 \\
+partner-management-services &  64 & 442 &  731 \\
+esignet-signup              & 303 & 323 &  544 \\
+admin-services              & 179 & 141 &  422 \\
+registration                &  69 &  61 &  390 \\
+resident-services           & 107 & 310 &  383 \\
+commons                     &  94 & 129 &  383 \\
+id-authentication           &  71 & 146 &  370 \\
+keymanager                  &  71 &  70 &  251 \\
+pre-registration            &  73 &  63 &  231 \\
+android-registration-client & 100 & 155 &  218 \\
+bio-utils                   &  87 &  59 &  190 \\
+print                       &  63 &  89 &  176 \\
+packet-manager              &  41 &  95 &  168 \\
+mosip-openid-bridge         &  59 &  33 &  156 \\
+registration-client         &   2 &  39 &   79 \\
+nfiq                        &  43 &  27 &   74 \\
+imagedecoder                &   7 &  14 &   51 \\
+gist                        &   0 &   0 &    1 \\
+\midrule
+\textbf{Total} & \textbf{2025} & \textbf{3029} & \textbf{6791} \\
+\textit{share of all branches} & \textit{30\%} & \textit{45\%} & \textit{100\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% --- accompanying prose, to replace the "Branch scope" paragraph in §2.5 -----
+%
+% \paragraph{Branch scope.} MOSIP follows gitflow, and only 30\% of commits in
+% the window are reachable from the repository default branch
+% (Table~\ref{tab:branches}). A further 15\% are reachable from
+% \texttt{develop}, and the remaining 55\% sit on feature branches that had not
+% been merged into either by the end of the window. No single branch therefore
+% captures development activity completely, and the choice of branch is a
+% substantive one rather than a formality.
+%
+% The two branches behave differently across repositories: \texttt{develop}
+% carries far more activity in some (\texttt{partner-management-services}, 442
+% against 64) while \texttt{master} carries more in others
+% (\texttt{admin-services}, 179 against 141), reflecting differences in release
+% discipline rather than a uniform convention.
+%
+% We report velocity on two scopes. The all-branches count answers "how much
+% work was performed", and is the figure used in the headline descriptive
+% statistics. The \texttt{develop} count answers "how much work reached the
+% integration branch", and matches the tree the SonarQube snapshots analyse, so
+% it is the scope used wherever velocity and quality are compared.
+% Table~\ref{tab:its} reports the interrupted time series under both; no
+% quality coefficient differs, and the velocity coefficients differ in
+% magnitude but not in sign or significance.
+
+
+%==============================================================================
+% TABLE C.2 — SELECTION FUNNEL.  Put this in §2.1.
+% Makes the selection reproducible and pre-empts "why these twenty".
+%==============================================================================
+\begin{table}[htbp]
+\centering
+\caption{Repository selection. Each row applies to the survivors of the row
+above.}
+\label{tab:selection}
+\small
+\begin{tabular}{@{}lrl@{}}
+\toprule
+Step & Remaining & Criterion \\
+\midrule
+Public repositories in the \texttt{mosip} organisation & 109 & --- \\
+Not archived, not a fork                               &  97 & active and original \\
+Primary language on the JVM                            &  48 & Java, Kotlin, Scala, Groovy \\
+Not a mock, test harness, or compliance toolkit        &  41 & name-based exclusion \\
+Not infrastructure, deployment or configuration        &  38 & name-based exclusion \\
+Not documentation or a demonstration artefact          &  36 & name-based exclusion \\
+\midrule
+\textbf{Top 20 by JVM source volume}                   & \textbf{20} & \textbf{analysed} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+%==============================================================================
+% TABLE C.3 — REVIEW ACTORS.  Put this in §3.3, before the coverage table.
+% Addresses the request to separate AI from human from other automation.
+%==============================================================================
+\begin{table}[htbp]
+\centering
+\caption{Review submissions by actor, in the six months either side of
+review-bot adoption. Non-AI automation (Dependabot, CI and release bots) opens
+pull requests in MOSIP but almost never reviews them, so the human/AI split is
+effectively exhaustive.}
+\label{tab:review-actors}
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+ & \multicolumn{2}{c}{Pre ($\tau \in [-6,-1]$)} & \multicolumn{2}{c}{Post ($\tau \in [+1,+6]$)} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+Reviewer & submissions & share & submissions & share \\
+\midrule
+Human              & 2516 & 99.8\% & 3222 & 57.9\% \\
+AI review bot      &    0 &  0.0\% & 2339 & 42.1\% \\
+Other automation   &    4 &  0.2\% &    0 &  0.0\% \\
+\midrule
+\textbf{Total}     & \textbf{2520} & & \textbf{5561} & \\
+\textit{Pull requests opened} & \textit{1731} & & \textit{1441} & \\
+\bottomrule
+\end{tabular}
+\end{table}

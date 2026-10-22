@@ -23,6 +23,7 @@ import argparse
 import csv
 import sys
 from pathlib import Path
+from typing import Optional, Sequence
 
 try:
     import matplotlib
@@ -31,6 +32,11 @@ try:
     HAVE_MPL = True
 except Exception:
     HAVE_MPL = False
+
+MIN_PERIOD_MONTHS = 3
+LOW_N_MARK = "†"
+DEBT_KEYS = ("sqale_index", "technical_debt",
+             "software_quality_maintainability_remediation_effort")
 
 
 def read_csv(path):
@@ -48,8 +54,13 @@ def fnum(v):
         return None
 
 
-def slope(pairs):
-    """Least-squares slope of y over sequential x index. pairs: list of (idx, y)."""
+def slope(pairs: Sequence[tuple[int, Optional[float]]]) -> Optional[float]:
+    """Least-squares slope of y over x, where x is a calendar-month offset.
+
+    Callers must pass real month distances (see month_pairs), not positional
+    indices: a 4-month hole in the series has to cost 4 steps, otherwise the
+    slope silently reports "per observation" while claiming "per month".
+    """
     pts = [(x, y) for x, y in pairs if y is not None]
     n = len(pts)
     if n < 2:
@@ -64,13 +75,26 @@ def slope(pairs):
     return (n * sxy - sx * sy) / denom
 
 
-def mean(vals):
-    vals = [v for v in vals if v is not None]
-    return sum(vals) / len(vals) if vals else None
+def mean(vals: Sequence[Optional[float]]) -> Optional[float]:
+    nums = [v for v in vals if v is not None]
+    return sum(nums) / len(nums) if nums else None
 
 
-def split_by_month(rows, month_key, adoption):
-    """Return (pre, post) lists of rows split at adoption month (inclusive post)."""
+def n_valid(vals: Sequence[Optional[float]]) -> int:
+    """Count of usable monthly observations behind a reported figure."""
+    return sum(1 for v in vals if v is not None)
+
+
+def split_by_month(rows: Sequence[dict], month_key: str,
+                   adoption: Optional[str]) -> tuple[list[dict], list[dict]]:
+    """Split rows at the adoption month (the adoption month itself is post).
+
+    With no adoption month there is nothing to split on, so every row is
+    returned as one whole-history period in `pre` and `post` is empty. Callers
+    must then render a single whole-history column (MetricTable(split=False)):
+    a pre/post table whose post cells all read "n/a" invites the reader to see
+    a before/after comparison that was never made.
+    """
     pre, post = [], []
     for r in rows:
         m = r.get(month_key, "")
@@ -86,6 +110,43 @@ def series(rows, month_key, val_key):
     return [(i, fnum(r.get(val_key))) for i, r in enumerate(ordered)], [r[month_key] for r in ordered]
 
 
+def adoption_month_of(row: dict) -> str:
+    """YYYY-MM of an ai_adoption.csv row, taken from the UTC column.
+
+    build_ai_operations picks the earliest row by true UTC instant but records
+    `first_action_date` verbatim (git writes a local offset, the GitHub API
+    writes Zulu). Slicing that raw string yields the LOCAL month of the
+    UTC-earliest action, which can be a month later than the earliest action in
+    ai_operations.csv — so read `first_action_date_utc`, and fall back only for
+    report dirs written before that column existed.
+    """
+    return ((row.get("first_action_date_utc")
+             or row.get("first_action_date") or "")[:7])
+
+
+def adoption_by_category(report) -> tuple:
+    """Earliest adoption month per category, as (coding, review).
+
+    These are two different interventions and must not be merged. An AI review
+    bot comments on code humans wrote; a coding agent writes it. In this cohort
+    they are a median of 7 months apart, so a single "first AI action" split
+    point attributes code-generation effects to a review-bot date.
+    """
+    coding = review = None
+    for r in read_csv(report / "ai_adoption.csv"):
+        if r.get("agent") == "__OVERALL__":
+            continue
+        m = adoption_month_of(r)
+        if not m:
+            continue
+        cat = r.get("category")
+        if cat == "coding":
+            coding = m if coding is None else min(coding, m)
+        elif cat == "review":
+            review = m if review is None else min(review, m)
+    return coding, review
+
+
 def find_adoption(report):
     """Adoption = the FIRST TRACKABLE AI ACTION OF ANY KIND (commit, merge, push,
     PR opened/merged, review, issue) — read from ai_adoption.csv when present.
@@ -96,9 +157,9 @@ def find_adoption(report):
         agents, earliest = [], None
         for r in adopt:
             if r.get("agent") == "__OVERALL__":
-                earliest = (r.get("first_action_date") or "")[:7]
+                earliest = adoption_month_of(r)
                 continue
-            fm = (r.get("first_action_date") or "")[:7]
+            fm = adoption_month_of(r)
             agents.append((r.get("agent", ""), fm,
                            f"{r.get('first_operation','')}·{r.get('operations_breakdown','')}"))
         if earliest:
@@ -116,22 +177,103 @@ def find_adoption(report):
     return earliest, sorted(agents, key=lambda a: a[1] or "9999")
 
 
-def fmt(v, nd=2, suffix=""):
+def fmt(v: Optional[float], nd: int = 2, suffix: str = "",
+        low_n: bool = False) -> str:
     if v is None:
         return "n/a"
-    return f"{v:.{nd}f}{suffix}"
+    return f"{v:.{nd}f}{suffix}{LOW_N_MARK if low_n else ''}"
 
 
-def delta_line(label, pre, post, nd=2, suffix=""):
+def underpowered(n: int) -> bool:
+    """True when a figure exists but rests on fewer than MIN_PERIOD_MONTHS."""
+    return 0 < n < MIN_PERIOD_MONTHS
+
+
+def delta_line(label: str, pre: Optional[float], post: Optional[float],
+               n_pre: int, n_post: int, nd: int = 2, suffix: str = "",
+               split: bool = True) -> str:
+    if not split:
+        return f"| {label} | {fmt(pre, nd, suffix, underpowered(n_pre))} | {n_pre} |"
     d = (post - pre) if (pre is not None and post is not None) else None
     arrow = ""
     if d is not None:
         arrow = " ↑" if d > 0 else (" ↓" if d < 0 else " →")
-    return (f"| {label} | {fmt(pre, nd, suffix)} | {fmt(post, nd, suffix)} | "
-            f"{fmt(d, nd, suffix)}{arrow} |")
+    return (f"| {label} | {fmt(pre, nd, suffix, underpowered(n_pre))} | "
+            f"{fmt(post, nd, suffix, underpowered(n_post))} | "
+            f"{fmt(d, nd, suffix)}{arrow} | {n_pre}/{n_post} |")
 
 
-def _month_ord(m):
+class MetricTable:
+    """A pre/post metric table that degrades to one whole-history column.
+
+    Every row carries the number of months actually behind it, and any figure
+    resting on fewer than MIN_PERIOD_MONTHS is marked and named in a warning
+    under the table — a 3-point post-slope must not read like a 30-point one.
+    """
+
+    def __init__(self, split: bool, pre_hdr: str = "pre",
+                 post_hdr: str = "post", delta_hdr: str = "Δ",
+                 whole_hdr: str = "whole history") -> None:
+        self.split = split
+        self.pre_hdr = pre_hdr
+        self.post_hdr = post_hdr
+        self.delta_hdr = delta_hdr
+        self.whole_hdr = whole_hdr
+        self.rows: list[str] = []
+        self.low: list[tuple[str, str, int]] = []
+
+    def add(self, label: str, pre: Optional[float], post: Optional[float],
+            n_pre: int, n_post: int, nd: int = 2, suffix: str = "") -> None:
+        self.rows.append(delta_line(label, pre, post, n_pre, n_post, nd,
+                                    suffix, self.split))
+        if underpowered(n_pre):
+            self.low.append((label, self.pre_hdr if self.split else "", n_pre))
+        if self.split and underpowered(n_post):
+            self.low.append((label, self.post_hdr, n_post))
+
+    def _warning(self) -> str:
+        groups: dict[tuple[str, int], list[str]] = {}
+        for label, period, n in self.low:
+            groups.setdefault((period, n), []).append(label)
+        parts = []
+        for (period, n), labels in groups.items():
+            names = ("all metrics" if len(labels) == len(self.rows)
+                     else ", ".join(labels))
+            parts.append(f"{names} ({period} n={n})" if period
+                         else f"{names} (n={n})")
+        return (f"> ⚠ **Underpowered ({LOW_N_MARK})** — fewer than "
+                f"{MIN_PERIOD_MONTHS} months of data behind "
+                + "; ".join(parts) +
+                ". Read those as indicative only, not as a trend.")
+
+    def render(self) -> list[str]:
+        if self.split:
+            out = [f"| Metric | {self.pre_hdr} | {self.post_hdr} | "
+                   f"{self.delta_hdr} | n months (pre/post) |",
+                   "|---|--:|--:|--:|--:|"]
+        else:
+            out = [f"| Metric | {self.whole_hdr} | n months |", "|---|--:|--:|"]
+        out.extend(self.rows)
+        if self.low:
+            out.append("")
+            out.append(self._warning())
+        return out
+
+
+def mean_table(pre: Sequence[dict], post: Sequence[dict],
+               specs: Sequence[tuple[str, str, int]],
+               split: bool) -> MetricTable:
+    """Mean-per-month table over (column, label, decimals) specs."""
+    tbl = MetricTable(split)
+    for key, lbl, nd in specs:
+        pre_v = [fnum(r.get(key)) for r in pre]
+        post_v = [fnum(r.get(key)) for r in post]
+        tbl.add(lbl, mean(pre_v), mean(post_v), n_valid(pre_v),
+                n_valid(post_v), nd)
+    return tbl
+
+
+def _month_ord(m: str) -> Optional[int]:
     """'YYYY-MM' -> integer month ordinal (year*12+month) for time-proportional x."""
     try:
         y, mo = m.split("-")[:2]
@@ -140,7 +282,36 @@ def _month_ord(m):
         return None
 
 
-def plot_series(months, values, adoption, title, ylabel, path, scale=1.0):
+def first_val(row: dict, keys: Sequence[str]) -> Optional[float]:
+    """Value of the first of `keys` this row actually populates."""
+    for k in keys:
+        v = row.get(k)
+        if v not in (None, ""):
+            return fnum(v)
+    return None
+
+
+def month_pairs(rows: Sequence[dict], keys: Sequence[str],
+                month_key: str = "month"
+                ) -> list[tuple[int, Optional[float]]]:
+    """Time-proportional (x, y) points for slope(), x = months since the first
+    month of this period. Months absent from the CSV (no commits, or a skipped
+    snapshot) stay absent, so the gap they leave is real distance on x."""
+    pts = []
+    for r in rows:
+        o = _month_ord(r.get(month_key, "") or "")
+        if o is None:
+            continue
+        pts.append((o, first_val(r, keys)))
+    if not pts:
+        return []
+    pts.sort(key=lambda p: p[0])
+    base = pts[0][0]
+    return [(o - base, y) for o, y in pts]
+
+
+def plot_series(months, values, adoption, title, ylabel, path, scale=1.0,
+                review=None, adoption_label="AI adoption"):
     """Time-aware monthly plot.
 
     - x is the real month ordinal, so gaps between non-consecutive months show as
@@ -182,9 +353,18 @@ def plot_series(months, values, adoption, title, ylabel, path, scale=1.0):
     ax.set_xticklabels([f"{(lo + t)//12:04d}-{(lo + t)%12 + 1:02d}" for t in ticks],
                        rotation=45, ha="right", fontsize=7)
 
+    drew = False
+    # Review-bot adoption first, so the coding-agent line sits on top of it when
+    # a repo adopted both in the same month.
+    if review and _month_ord(review) is not None:
+        ax.axvline(_month_ord(review) - lo, color="#2C5C4C", ls=(0, (5, 3)),
+                   lw=1.2, label=f"AI review bot ({review})")
+        drew = True
     if adoption and _month_ord(adoption) is not None:
-        ax.axvline(_month_ord(adoption) - lo, color="crimson", ls="--", lw=1.2,
-                   label=f"AI adoption ({adoption})")
+        ax.axvline(_month_ord(adoption) - lo, color="crimson", ls="--", lw=1.4,
+                   label=f"{adoption_label} ({adoption})")
+        drew = True
+    if drew:
         ax.legend(fontsize=8)
     ax.set_title(title, fontsize=10)
     ax.set_ylabel(ylabel, fontsize=8)
@@ -195,10 +375,15 @@ def plot_series(months, values, adoption, title, ylabel, path, scale=1.0):
     plt.close(fig)
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("report", help="repo_report/<owner_repo> directory")
     ap.add_argument("--adoption", help="override adoption month YYYY-MM")
+    ap.add_argument("--split-on", choices=("coding", "review", "any"),
+                    default="coding",
+                    help="which event is month 0: the first CODING agent "
+                         "(default), the first review bot, or the first AI "
+                         "action of any kind (the old behaviour)")
     args = ap.parse_args()
     report = Path(args.report)
     if not report.exists():
@@ -206,9 +391,25 @@ def main():
     plots = report / "plots"
     plots.mkdir(exist_ok=True)
 
-    adoption, agents = find_adoption(report)
+    any_adoption, agents = find_adoption(report)
+    coding, review = adoption_by_category(report)
+    if args.split_on == "coding":
+        # fall back to the any-kind date so a repo with only a review bot still
+        # gets a split rather than silently losing its pre/post comparison
+        adoption = coding or any_adoption
+        adoption_label = ("AI coding agent" if coding else "first AI action")
+    elif args.split_on == "review":
+        adoption = review or any_adoption
+        adoption_label = ("AI review bot" if review else "first AI action")
+    else:
+        adoption = any_adoption
+        adoption_label = "AI adoption"
     if args.adoption:
-        adoption = args.adoption
+        adoption, adoption_label = args.adoption, "adoption (override)"
+    # never draw the same month twice
+    if review == adoption:
+        review = None
+    split = bool(adoption)
 
     velocity = read_csv(report / "velocity_monthly.csv")
     quality = read_csv(report / "quality_monthly.csv")
@@ -218,15 +419,32 @@ def main():
     L = []
     L.append(f"# {report.name} — AI-impact evaluation\n")
     if adoption:
-        L.append(f"**AI-adoption month (split point): `{adoption}`** — defined as the "
-                 f"*first trackable AI action of any kind* (commit, merge, push, PR "
-                 f"open/merge, review, or issue), not the first config file.\n")
+        WHAT = {
+            "AI coding agent": "the first commit or PR attributable to an AI "
+                               "*coding* agent (Cursor, Codex, Claude Code, …) — "
+                               "the point at which AI began writing code here",
+            "AI review bot": "the first review left by an AI *review* bot "
+                             "(CodeRabbit, Copilot review, …)",
+            "first AI action": "the first trackable AI action of any kind "
+                               "(commit, merge, push, PR, review or issue)",
+            "adoption (override)": "supplied on the command line",
+        }.get(adoption_label, "the first trackable AI action")
+        L.append(f"**Split point: `{adoption}`** — {adoption_label}, defined as "
+                 f"{WHAT}.\n")
+        if review:
+            L.append(f"An AI **review bot** arrived earlier, in `{review}`. That is a "
+                     f"different intervention — it comments on code people wrote, it "
+                     f"does not write code — so it is drawn on every plot as a second "
+                     f"marker but is not the split point. Reading a code-generation "
+                     f"effect off a review-bot date is the main interpretation hazard "
+                     f"in this report.\n")
         L.append("Per-agent first action: " +
                  ", ".join(f"{a} ({fs})" for a, fs, _ in agents if fs) + "\n")
     else:
         L.append("**No AI usage detected** (no attributable commit, merge, PR, "
-                 "review, or issue) — no adoption split; metrics below are "
-                 "whole-history trends only.\n")
+                 "review, or issue) — there is no adoption split, so every "
+                 "table below reports a single whole-history column rather "
+                 "than a before/after comparison.\n")
 
     # ---- AI operations breakdown ----
     ops = read_csv(report / "ai_operations.csv")
@@ -257,77 +475,66 @@ def main():
     if velocity:
         pre, post = split_by_month(velocity, "month", adoption)
         L.append("\n## 1. Velocity (speed)\n")
-        L.append("| Metric | pre | post | Δ |")
-        L.append("|---|--:|--:|--:|")
-        for key, lbl in [("commits", "mean monthly commits"),
-                         ("lines_added", "mean monthly lines added"),
-                         ("lines_removed", "mean monthly lines removed"),
-                         ("contributors", "mean monthly contributors")]:
-            L.append(delta_line(lbl, mean([fnum(r.get(key)) for r in pre]),
-                                mean([fnum(r.get(key)) for r in post])))
+        L.extend(mean_table(pre, post, [
+            ("commits", "mean monthly commits", 2),
+            ("lines_added", "mean monthly lines added", 2),
+            ("lines_removed", "mean monthly lines removed", 2),
+            ("contributors", "mean monthly contributors", 2)], split).render())
         (idx, months) = series(velocity, "month", "commits")
         plot_series(months, [v for _, v in idx], adoption,
-                    "Monthly commits", "commits", plots / "velocity_commits.png")
+                    "Monthly commits", "commits", plots / "velocity_commits.png",
+                    review=review, adoption_label=adoption_label)
 
     # ---- Size + Quality ----
     if quality:
         pre, post = split_by_month(quality, "month", adoption)
         L.append("\n## 2. Code size & quality (SonarQube, monthly snapshots)\n")
-        L.append("Quality is reported as **trend slope** (change per month): "
-                 "positive slope on smells/bugs/debt = worsening.\n")
-        L.append("| Metric | pre-slope | post-slope | Δ slope |")
-        L.append("|---|--:|--:|--:|")
+        L.append("Quality is reported as **trend slope** (change per calendar "
+                 "month): positive slope on smells/bugs/debt = worsening. "
+                 "Months missing from the series count as elapsed time, not as "
+                 "one step.\n")
+        tbl = MetricTable(split, "pre-slope", "post-slope", "Δ slope",
+                          "whole-history slope")
         # Each entry: (label, [candidate column names in priority order]).
         for lbl, keys in [("size (ncloc)", ["ncloc"]),
                           ("bugs", ["bugs"]),
                           ("vulnerabilities", ["vulnerabilities"]),
                           ("code smells", ["code_smells"]),
                           ("cognitive complexity", ["cognitive_complexity"]),
-                          ("technical debt (remediation min)",
-                           ["sqale_index", "technical_debt",
-                            "software_quality_maintainability_remediation_effort"]),
+                          ("technical debt (remediation min)", list(DEBT_KEYS)),
                           ("duplication %", ["duplicated_lines_density"]),
                           ("comment density %", ["comment_lines_density"])]:
-            def getv(r):
-                for k in keys:
-                    if r.get(k) not in (None, ""):
-                        return fnum(r.get(k))
-                return None
-            pre_s = slope([(i, getv(r)) for i, r in
-                           enumerate(sorted(pre, key=lambda x: x.get("month", "")))])
-            post_s = slope([(i, getv(r)) for i, r in
-                            enumerate(sorted(post, key=lambda x: x.get("month", "")))])
-            L.append(delta_line(lbl, pre_s, post_s, nd=3))
-        debt_key = next((k for k in ("sqale_index", "technical_debt",
-                        "software_quality_maintainability_remediation_effort")
-                        if quality and quality[0].get(k) not in (None,)), "sqale_index")
+            pre_pts = month_pairs(pre, keys)
+            post_pts = month_pairs(post, keys)
+            tbl.add(lbl, slope(pre_pts), slope(post_pts),
+                    n_valid([y for _, y in pre_pts]),
+                    n_valid([y for _, y in post_pts]), nd=3)
+        L.extend(tbl.render())
+        debt_key = next((k for k in DEBT_KEYS
+                         if any((r.get(k) or "").strip() for r in quality)),
+                        "sqale_index")
         for key, ylabel in [("code_smells", "code smells"),
                             ("cognitive_complexity", "cognitive complexity"),
                             (debt_key, "tech debt (min)"),
                             ("ncloc", "ncloc")]:
             idx, months = series(quality, "month", key)
             plot_series(months, [v for _, v in idx], adoption,
-                        f"Monthly {ylabel}", ylabel, plots / f"quality_{key}.png")
+                        f"Monthly {ylabel}", ylabel, plots / f"quality_{key}.png",
+                        review=review, adoption_label=adoption_label)
 
     # ---- Issue health ----
     if issues:
         pre, post = split_by_month(issues, "month", adoption)
         L.append("\n## 3. Issue-resolution health\n")
-        L.append("| Metric | pre | post | Δ |")
-        L.append("|---|--:|--:|--:|")
-        L.append(delta_line("median resolution (hours)",
-                            mean([fnum(r.get("median_resolution_hours")) for r in pre]),
-                            mean([fnum(r.get("median_resolution_hours")) for r in post]), nd=1))
-        L.append(delta_line("mean monthly issues opened",
-                            mean([fnum(r.get("opened")) for r in pre]),
-                            mean([fnum(r.get("opened")) for r in post]), nd=1))
-        L.append(delta_line("mean open bug backlog",
-                            mean([fnum(r.get("open_bug_backlog")) for r in pre]),
-                            mean([fnum(r.get("open_bug_backlog")) for r in post]), nd=1))
+        L.extend(mean_table(pre, post, [
+            ("median_resolution_hours", "median resolution (hours)", 1),
+            ("opened", "mean monthly issues opened", 1),
+            ("open_bug_backlog", "mean open bug backlog", 1)], split).render())
         idx, months = series(issues, "month", "median_resolution_hours")
         plot_series(months, [v for _, v in idx], adoption,
                     "Median issue resolution time (per close-month)", "days",
-                    plots / "issue_resolution.png", scale=1.0 / 24.0)
+                    plots / "issue_resolution.png", scale=1.0 / 24.0,
+                    review=review, adoption_label=adoption_label)
         # Repo-wide issue statistics (percentiles, first response, AI actors).
         stats = read_csv(report / "issue_stats.csv")
         if stats:
@@ -357,17 +564,11 @@ def main():
         bots = sorted({r.get("ai_bot_name") for r in ai_bots
                        if r.get("is_ai_bot") in ("True", "true", True)} - {"", None})
         L.append(f"**AI review bots detected:** {', '.join(bots) if bots else 'NONE'}\n")
-        L.append("| Metric | pre | post | Δ |")
-        L.append("|---|--:|--:|--:|")
-        L.append(delta_line("mean AI-review share",
-                            mean([fnum(r.get("ai_review_share")) for r in pre]),
-                            mean([fnum(r.get("ai_review_share")) for r in post]), nd=3))
-        L.append(delta_line("mean monthly PRs opened",
-                            mean([fnum(r.get("prs_opened")) for r in pre]),
-                            mean([fnum(r.get("prs_opened")) for r in post]), nd=1))
-        L.append(delta_line("median review comments/PR",
-                            mean([fnum(r.get("median_review_comments")) for r in pre]),
-                            mean([fnum(r.get("median_review_comments")) for r in post]), nd=1))
+        L.extend(mean_table(pre, post, [
+            ("ai_review_share", "mean AI-review share", 3),
+            ("prs_opened", "mean monthly PRs opened", 1),
+            ("median_review_comments", "median review comments/PR", 1)],
+            split).render())
 
     # ---- Interpretation + caveat ----
     L.append("\n## Interpretation\n")
@@ -398,13 +599,15 @@ def main():
         ("comment_lines_density", "documentation", "Comments as % of (code + comments). Very low or very high can both be smells.", "context"),
     ]:
         L.append(f"| `{metric}` | {typ} | {meaning} | {direction} |")
-    L.append("\n*In §2, each metric is shown as a **slope** (change per month). A "
+    L.append("\n*In §2, each metric is shown as a **slope** (change per calendar "
+             "month, gaps in the monthly series included). A "
              "positive slope on smells/complexity/debt means quality is degrading "
              "over time; the pre-vs-post Δ shows whether AI adoption changed that rate. "
              "Raw counts rise with `ncloc`, so also read them per-1k-lines when comparing "
-             "periods of different size.*\n")
+             "periods of different size. The `n months` column is the sample behind each "
+             f"figure; a {LOW_N_MARK} marks fewer than {MIN_PERIOD_MONTHS} months.*\n")
 
-    (report / "SUMMARY.md").write_text("\n".join(L))
+    (report / "SUMMARY.md").write_text("\n".join(L) + "\n", encoding="utf-8")
     print(f"Wrote {report/'SUMMARY.md'}")
     if HAVE_MPL:
         print(f"Plots in {plots}/")
