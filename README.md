@@ -6,6 +6,34 @@ This repository contains the replication package for the following paper:
 
 The additional `.gitignore`d files are available on Zenodo: [10.5281/zenodo.18368661](https://doi.org/10.5281/zenodo.18368661)
 
+## MOSIP extension study
+
+This repository also hosts a follow-on study applying the same measurement
+approach to the MOSIP digital public infrastructure project.
+
+**Report:** [`report/LLM_AI_Impact_Report_update (1).pdf`](report/) —
+*AI Coding Agents and Software Development in MOSIP: code volume, code quality,
+and code-review practice following AI adoption.* Upanzi Network, Carnegie
+Mellon University Africa.
+
+| | |
+|---|---|
+| Subjects | 20 MOSIP core-service repositories, 326 repository-months |
+| Window | January 2025 – August 2026 |
+| Data | 6,786 commits · 5,603 pull requests · 286 SonarQube snapshots |
+| Design | Event study + interrupted time series, split on AI coding-agent adoption |
+
+* [`repo outputs/_tools/`](repo%20outputs/_tools/) — per-repository collection
+  pipeline (clone → SonarQube → AI detection → GitHub collectors → analysis)
+* [`repo outputs/_tools/analysis/`](repo%20outputs/_tools/analysis/) — pooled
+  analysis, statistics and figures. **Start here to reproduce the report**;
+  its README documents every script and output.
+* [`repo outputs/paper/`](repo%20outputs/paper/) — LaTeX source for the report
+
+Unlike the replication package below, this study reports **absolute** measures
+throughout and uses an interrupted time-series specification to separate
+adoption effects from pre-existing growth trends.
+
 ## Organization
 
 * The `scripts/` folder contains all the scripts we used to collect data, run propensity score matching, and collect SonarQube metrics. These scripts are volatile in nature: Rerunning them will likely not get the same dataset we obtained for our paper (GitHub repositories growing and taken down, GitHub API changing, SonarQube changing, etc.), but they might be a valuable reference.

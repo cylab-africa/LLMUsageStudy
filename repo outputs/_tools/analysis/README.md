@@ -1,12 +1,18 @@
 # Cross-repo analysis layer (`_tools/analysis/`)
 
+> **The report these scripts produce:**
+> [`report/LLM_AI_Impact_Report_update (1).pdf`](../../../report/)
+> — *AI Coding Agents and Software Development in MOSIP*, Upanzi Network,
+> Carnegie Mellon University Africa. LaTeX source in
+> [`repo outputs/paper/`](../../paper/).
+
 `_tools/` proper produces **one report per repository**. These scripts sit on
 top of that: they pool the per-repo reports into a panel and produce the
-figures, statistics and tables used in the paper.
+figures, statistics and tables that appear in that report.
 
-Every number in the paper comes from one of these scripts. If a table or figure
-cannot be traced to a command below, treat that as a bug — it means something
-was computed by hand and will drift.
+Every number in the report comes from one of these scripts. If a table or
+figure cannot be traced to a command below, treat that as a bug — it means
+something was computed by hand and will drift.
 
 ## Setup
 
@@ -137,10 +143,17 @@ Per-repo plots under `repo_report/*/plots/` follow the same convention — see
   few distinct SonarQube snapshots, so their flat panels carry little
   information.
 
-## Paper
+## Where the output goes
 
-`repo outputs/paper/` holds the LaTeX. `its_sections.tex`,
-`appendix_repos.tex` and `extra_tables.tex` are drop-in blocks; each says in a
-header comment where it goes. Tables there are generated from the CSVs above
-rather than typed, so regenerating the data and re-pasting keeps them
-consistent.
+| | |
+|---|---|
+| **Report (PDF)** | `report/LLM_AI_Impact_Report_update (1).pdf` |
+| LaTeX source | `repo outputs/paper/main.tex` + `preamble.tex` |
+| Drop-in sections | `its_sections.tex`, `appendix_repos.tex`, `extra_tables.tex` |
+| Figures | `repo outputs/paper/figures/` (copied from `analytics/`) |
+
+Each drop-in block says in a header comment which section of the report it
+belongs to. Tables are generated from the CSVs above rather than typed, so
+regenerating the data and re-pasting keeps the report and the data consistent.
+Table C.1 in particular is emitted from `branch_scope.csv`: an earlier
+hand-transcribed version drifted by two commits between runs.
